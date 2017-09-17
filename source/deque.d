@@ -53,6 +53,19 @@ struct PayloadHandler {
 			}
 		}
 	}
+
+	static Payload* duplicate(Payload* pl) {
+		Payload* ret = make();	
+		ret.base = pl.base;
+		ret.length = pl.length;
+		allocate(ret, pl.length);
+		size_t len = (*pl).length;
+		ret.store[0 .. len] = pl.store[0 .. len];
+		//for(size_t i = 0; i < len; ++i) {
+		//	(ret.store)[i] = (pl.store)[i];
+		//}
+		return ret;
+	}
 }
 
 unittest {
@@ -61,11 +74,12 @@ unittest {
 	*(cast(int*)(pl.store)) = 1337;
 	assertEqual(*(cast(int*)(pl.store)), 1337);
 	PayloadHandler.incrementRefCnt(pl);
+	auto pl2 = PayloadHandler.duplicate(pl);
+	assertEqual(*(cast(int*)(pl2.store)), 1337);
 	PayloadHandler.decrementRefCnt(pl);
 	PayloadHandler.decrementRefCnt(pl);
+	PayloadHandler.decrementRefCnt(pl2);
 }
-
-
 
 /*struct DequeSlice(FSA,T, size_t Size) {
 	FSA* fsa;
@@ -202,6 +216,7 @@ struct Deque(T) {
 	size_t capacity() const @nogc @safe pure nothrow {
 		return Size;
 	}*/
+	+/
 
 	/** This function inserts an `S` element at the back if there is space.
 	Otherwise the behaviour is undefined.
@@ -217,8 +232,7 @@ struct Deque(T) {
 		this.length_ += T.sizeof;
 	}
 
-	/*
-
+	/+
 	/// Ditto
 	pragma(inline, true)
 	void insertBack(S)(auto ref S s) @trusted if(!is(Unqual!(S) == T)) {
