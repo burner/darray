@@ -1,0 +1,12 @@
+{
+	"name": "deque",
+	"authors": [
+		"burner"
+	],
+	"dependencies": {
+		"exceptionhandling": "~>0.1.0"
+	},
+	"description": "A double ended growable array",
+	"copyright": "Copyright © 2017, burner",
+	"license": "LGPL3"
+}
