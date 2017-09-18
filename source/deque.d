@@ -81,7 +81,7 @@ unittest {
 	PayloadHandler.decrementRefCnt(pl2);
 }
 
-/*struct DequeSlice(FSA,T, size_t Size) {
+struct DequeSlice(FSA,T) {
 	FSA* fsa;
 	short low;
 	short high;
@@ -174,7 +174,7 @@ unittest {
 				cast(short)(this.low + h)
 			);
 	}
-}*/
+}
 
 struct Deque(T) {
 	import std.traits;
@@ -235,19 +235,21 @@ struct Deque(T) {
 			}
 		}
 	}
+	+/
 
 	pragma(inline, true)
 	size_t capacity() const @nogc @safe pure nothrow {
-		return Size;
-	}*/
-	+/
+		if(this.payload is null) {
+			return cast(size_t)0;
+		}
+		return this.payload.capacity;
+	}
 
 	/** This function inserts an `S` element at the back if there is space.
 	Otherwise the behaviour is undefined.
 	*/
 	pragma(inline, true)
 	void insertBack(S)(auto ref S t) @trusted if(is(Unqual!(S) == T)) {
-		import std.conv : emplace;
 		this.buildCapacity();
 
 		*(cast(T*)(&this.payload.store[
@@ -257,7 +259,6 @@ struct Deque(T) {
 		this.payload.length += TSize;
 	}
 
-	/+
 	/// Ditto
 	pragma(inline, true)
 	void insertBack(S)(auto ref S s) @trusted if(!is(Unqual!(S) == T)) {
@@ -280,10 +281,12 @@ struct Deque(T) {
 				 this.insertBack!T(it);
 			}
         } else static if(isAssignable!(T,S)) {
-			*(cast(T*)(&this.store[
-				cast(size_t)((this.base + this.length_) % ByteCap)
+			this.buildCapacity();
+			*(cast(T*)(&this.payload.store[
+				cast(size_t)((this.payload.base + this.payload.length) %
+					this.payload.capacity)
 			])) = s;
-			this.length_ += T.sizeof;
+			this.payload.length += TSize;
 		} else {
 			static assert(false);
 		}
@@ -298,8 +301,8 @@ struct Deque(T) {
 	}
 
 	///
-	pure @safe unittest {
-		Deque!(int,32) fsa;
+	@safe unittest {
+		Deque!(int) fsa;
 		fsa.insertBack(1337);
 		assert(fsa.length == 1);
 		assert(fsa[0] == 1337);
@@ -316,19 +319,18 @@ struct Deque(T) {
 	*/
 	pragma(inline, true)
 	void insertFront(S)(auto ref S t) @trusted if(is(Unqual!(S) == T)) {
-		import std.conv : emplace;
-		import std.stdio;
-		assert(this.length + 1 <= Size);
-
-		this.base -= T.sizeof;
-		if(this.base < 0) {
-			this.base = cast(typeof(this.base))((ByteCap) - T.sizeof);
+		this.buildCapacity();
+		this.payload.base -= TSize;
+		if(this.payload.base < 0) {
+			this.payload.base =
+				cast(typeof(this.payload.base))((this.payload.capacity) - TSize);
 		}
 
-		*(cast(T*)(&this.store[cast(size_t)this.base])) = t;
-		this.length_ += T.sizeof;
+		*(cast(T*)(&this.payload.store[cast(size_t)this.payload.base])) = t;
+		this.payload.length += TSize;
 	}
 
+	/+
 	pure @safe unittest {
 		Deque!(int,32) fsa;
 		fsa.insertFront(1337);
@@ -389,6 +391,7 @@ struct Deque(T) {
 			assert(fsa.empty);
 		}
 	}
+	+/
 
 	/** This function emplaces an `S` element at the back if there is space.
 	Otherwise the behaviour is undefined.
@@ -396,12 +399,13 @@ struct Deque(T) {
 	pragma(inline, true)
 	void emplaceBack(Args...)(auto ref Args args) {
 		import std.conv : emplace;
-		assert(this.length + 1 <= Size);
+		this.buildCapacity();
 
-		emplace(cast(T*)(&this.store[
-			cast(size_t)((this.base + this.length_) % ByteCap)]
+		emplace(cast(T*)(&this.payload.store[
+			cast(size_t)((this.payload.base + this.payload.length) %
+				this.payload.capacity)]
 		), args);
-		this.length_ += T.sizeof;
+		this.payload.length += TSize;
 	}
 
 	/** This function removes an element form the back of the array.
@@ -422,7 +426,7 @@ struct Deque(T) {
 			}
 		}
 
-		this.length_ -= T.sizeof;
+		this.payload.length -= TSize;
 	}
 
 	/** This function removes an element form the front of the array.
@@ -444,15 +448,15 @@ struct Deque(T) {
 		}
 
 		//this.begin = (this.begin + T.sizeof) % (Size * T.sizeof);
-		this.base += T.sizeof;
-		if(this.base >= ByteCap) {
-			this.base = 0;
+		this.payload.base += TSize;
+		if(this.payload.base >= this.payload.capacity) {
+			this.payload.base = 0;
 		}
-		this.length_ -= T.sizeof;
+		this.payload.length -= TSize;
 	}
 
-	pure @safe unittest {
-		Deque!(int,32) fsa;
+	@safe unittest {
+		Deque!(int) fsa;
 		fsa.insertBack(1337);
 		assert(fsa.length == 1);
 		assert(fsa[0] == 1337);
@@ -471,8 +475,8 @@ struct Deque(T) {
 		}
 	}
 
-	pure @safe unittest {
-		Deque!(int,32) fsa;
+	@safe unittest {
+		Deque!(int) fsa;
 		fsa.insertBack(1337);
 		fsa.insertBack(1338);
 		assert(fsa.length == 2);
@@ -484,6 +488,7 @@ struct Deque(T) {
 		assert(fsa.empty);
 	}
 
+	/+
 	pragma(inline, true)
 	void remove(ulong idx) {
 		import std.stdio;
@@ -533,81 +538,99 @@ struct Deque(T) {
 			assert(fsa[idx] == i);
 		}
 	}
+	+/
 
 	/** Access the last or the first element of the array.
 	*/
 	pragma(inline, true)
 	@property ref T back() @trusted {
-		assert(!this.empty);
-		return *(cast(T*)(&this.store[
-			cast(size_t)(this.base + this.length_ - T.sizeof) % ByteCap
+		ensure(this.payload !is null);
+		return *(cast(T*)(&this.payload.store[
+			cast(size_t)(this.payload.base + this.payload.length - TSize) 
+				% this.payload.capacity
 		]));
 	}
 
 	pragma(inline, true)
 	@property ref const(T) back() const @trusted {
-		assert(!this.empty);
-		return *(cast(T*)(&this.store[
-			cast(size_t)(this.base + this.length_ - T.sizeof) % ByteCap
+		ensure(this.payload !is null);
+		return *(cast(T*)(&this.payload.store[
+			cast(size_t)(this.payload.base + this.payload.length - TSize) 
+				% this.payload.capacity
 		]));
 	}
 
 	/// Ditto
 	pragma(inline, true)
 	@property ref T front() @trusted {
-		assert(!this.empty);
-		return *(cast(T*)(&this.store[cast(size_t)this.base]));
+		ensure(this.payload !is null);
+		return *(cast(T*)(&this.payload.store[cast(size_t)this.payload.base]));
 	}
 
 	pragma(inline, true)
 	@property ref const(T) front() const @trusted {
-		assert(!this.empty);
-		return *(cast(T*)(&this.store[cast(size_t)this.base]));
+		ensure(this.payload !is null);
+		return *(cast(T*)(&this.payload.store[cast(size_t)this.payload.base]));
 	}
 
 	///
-	pure @safe unittest {
-		Deque!(int,32) fsa;
+	@safe unittest {
+		Deque!(int) fsa;
+		assertEqual(fsa.capacity, 0);
 		fsa.insertBack(1337);
 		fsa.insertBack(1338);
+		assert(fsa.capacity > 0);
 		assert(fsa.length == 2);
 
 		assert(fsa.front == 1337);
 		assert(fsa.back == 1338);
+
+		void f(ref const(Deque!int) d) {
+			assert(d.front == 1337);
+			assert(d.back == 1338);
+		}
+
+		f(fsa);
 	}
 
 	/** Use an index to access the array.
 	*/
 	pragma(inline, true)
 	ref T opIndex(const size_t idx) @trusted {
-		import std.format : format;
-		assert(idx <= this.length, format("%s %s", idx, this.length));
-		return *(cast(T*)(&this.store[
-				cast(size_t)((this.base + idx * T.sizeof) % ByteCap)
+		ensure(idx <= this.length);
+		return *(cast(T*)(&this.payload.store[
+				cast(size_t)((this.payload.base + idx * TSize) %
+					this.payload.capacity)
 		]));
 	}
 
 	/// Ditto
 	pragma(inline, true)
 	ref const(T) opIndex(const size_t idx) @trusted const {
-		import std.format : format;
-		assert(idx <= this.length, format("%s %s", idx, this.length));
-		return *(cast(const(T)*)(&this.store[
-				cast(size_t)((this.base + idx * T.sizeof) % ByteCap)
+		ensure(idx <= this.length);
+		return *(cast(T*)(&this.payload.store[
+				cast(size_t)((this.payload.base + idx * TSize) %
+					this.payload.capacity)
 		]));
 	}
 
 	///
-	pure @safe unittest {
-		Deque!(int,32) fsa;
+	@safe unittest {
+		Deque!(int) fsa;
 		fsa.insertBack(1337);
 		fsa.insertBack(1338);
 		assert(fsa.length == 2);
 
 		assert(fsa[0] == 1337);
 		assert(fsa[1] == 1338);
+
+		void f(ref const(Deque!int) d) {
+			assert(d[0] == 1337);
+			assert(d[1] == 1338);
+		}
+
+		f(fsa);
 	}
-	+/
 
 	/// Gives the length of the array.
 	pragma(inline, true)
@@ -624,10 +647,9 @@ struct Deque(T) {
 		return this.length == 0;
 	}
 
-	/+
 	///
-	pure @safe nothrow unittest {
-		Deque!(int,32) fsa;
+	@safe unittest {
+		Deque!(int) fsa;
 		assert(fsa.empty);
 		assert(fsa.length == 0);
 
@@ -639,35 +661,34 @@ struct Deque(T) {
 	}
 
 	pragma(inline, true)
-	DequeSlice!(typeof(this),T,Size) opSlice() pure @nogc @safe nothrow {
-		return DequeSlice!(typeof(this),T,Size)(&this, cast(short)0, 
+	DequeSlice!(typeof(this),T) opSlice() pure @nogc @safe nothrow {
+		return DequeSlice!(typeof(this),T)(&this, cast(short)0, 
 				cast(short)this.length
 		);
 	}
 	
 	pragma(inline, true)
-	DequeSlice!(typeof(this),T,Size) opSlice(const size_t low, 
+	DequeSlice!(typeof(this),T) opSlice(const size_t low, 
 			const size_t high) 
 			pure @nogc @safe nothrow 
 	{
-		return DequeSlice!(typeof(this),T,Size)(&this, cast(short)low, 
+		return DequeSlice!(typeof(this),T)(&this, cast(short)low, 
 				cast(short)high
 		);
 	}
 
 	pragma(inline, true)
 	auto opSlice() pure @nogc @safe nothrow const {
-		return DequeSlice!(typeof(this),const(T),Size)
+		return DequeSlice!(typeof(this),const(T))
 			(&this, cast(short)0, cast(short)this.length);
 	}
 	
 	pragma(inline, true)
 	auto opSlice(const size_t low, const size_t high) pure @nogc @safe nothrow const 
 	{
-		return DequeSlice!(typeof(this),const(T),Size)
+		return DequeSlice!(typeof(this),const(T))
 			(&this, cast(short)low, cast(short)high);
 	}
-	+/
 }
 
 unittest {
@@ -690,12 +711,11 @@ unittest {
 	assertEqual(d2.length, 21);
 }
 
-/+
 unittest {
 	import exceptionhandling;
 	import std.stdio;
 
-	Deque!(int, 16) fsa;
+	Deque!(int) fsa;
 	assert(fsa.empty);
 	cast(void)assertEqual(fsa.length, 0);
 
@@ -726,7 +746,7 @@ unittest {
 unittest {
 	import std.format;
 
-	Deque!(char,64) fsa;
+	Deque!(char) fsa;
 	formattedWrite(fsa[], "%s %s %s", "Hello", "World", 42);
 	//assert(cast(string)fsa == "Hello World 42", cast(string)fsa);
 }
@@ -734,7 +754,7 @@ unittest {
 unittest {
 	import exceptionhandling;
 
-	Deque!(int,16) fsa;
+	Deque!(int) fsa;
 	auto a = [0,1,2,4,32,64,1024,2048,65000];
 	foreach(idx, it; a) {
 		fsa.insertBack(it);
@@ -753,12 +773,12 @@ unittest {
 	import std.range;
 	import std.stdio;
 	foreach(Type; AliasSeq!(byte,int,long)) {
-		Deque!(Type,16) fsa2;
+		Deque!(Type) fsa2;
 		static assert(isInputRange!(typeof(fsa2[])));
 		static assert(isForwardRange!(typeof(fsa2[])));
 		static assert(isBidirectionalRange!(typeof(fsa2[])));
 		foreach(idx, it; [[0], [0,1,2,3,4], [2,3,6,5,6,21,9,36,61,62]]) {
-			Deque!(Type,16) fsa;
+			Deque!(Type) fsa;
 			foreach(jdx, jt; it) {
 				fsa.insertBack(jt);
 				//writefln("%s idx %d jdx %d length %d", Type.stringof, idx, jdx, fsa.length);
@@ -806,7 +826,7 @@ unittest {
 				}
 
 				{
-					const(Deque!(Type,16))* constFsa;
+					const(Deque!(Type))* constFsa;
 					constFsa = &fsa;
 					auto forward = (*constFsa)[];
 					auto forward2 = forward.save;
@@ -849,6 +869,7 @@ unittest {
 	}
 }
 
+/+
 unittest {
 	import exceptionhandling;
 
