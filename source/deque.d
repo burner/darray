@@ -59,10 +59,11 @@ struct PayloadHandler {
 	static Payload* duplicate(Payload* pl) {
 		Payload* ret = make();	
 		ret.base = pl.base;
-		ret.length = pl.capacity;
+		ret.length = pl.length;
 		allocate(ret, pl.capacity);
 		size_t len = (*pl).capacity;
 		ret.store[0 .. len] = pl.store[0 .. len];
+		decrementRefCnt(pl);
 		return ret;
 	}
 }
@@ -186,6 +187,12 @@ struct Deque(T) {
 	bool disableDtor;
 
 	enum TSize = SizeToAlloc!T;
+
+	this(this) {
+		if(this.payload !is null) {
+			PayloadHandler.incrementRefCnt(this.payload);
+		}
+	}
 
 	template SizeToAlloc(S) {
 		static if(is(S == class)) {
@@ -665,9 +672,22 @@ struct Deque(T) {
 
 unittest {
 	Deque!int d;
+	assertEqual(d.length, 0);
+	assert(d.empty);
+
 	for(int i = 0; i < 20; ++i) {
 		d.insertBack(i);
+		assertEqual(d.length, i+1);
 	}
+	assertEqual(d.length, 20);
+
+	Deque!int d2 = d;
+	assertEqual(d.length, 20);
+	assertEqual(d2.length, 20);
+
+	d2.insertBack(21);
+	assertEqual(d.length, 20);
+	assertEqual(d2.length, 21);
 }
 
 /+
