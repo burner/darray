@@ -7,6 +7,7 @@ import exceptionhandling;
 
 struct Payload {
 	align(8) void* store;
+	size_t capacity;
 	long base;
 	long length;
 	long refCnt;
@@ -20,6 +21,7 @@ struct PayloadHandler {
 		pl.store = null;
 		pl.base = 0;
 		pl.length = 0;
+		pl.capacity = 0;
 		pl.refCnt = 1;
 
 		return pl;
@@ -29,13 +31,13 @@ struct PayloadHandler {
 		assert(s != 0);
 		if(s >= pl.length) {
 			pl.store = GC.realloc(pl.store, s);
-			pl.length = s;
+			pl.capacity = s;
 		}
 	}
 
 	static void deallocate(Payload* pl) @trusted {
 		GC.realloc(pl.store, 0);
-		pl.length = 0;
+		pl.capacity = 0;
 		GC.realloc(pl, 0);
 	}
 
@@ -57,13 +59,10 @@ struct PayloadHandler {
 	static Payload* duplicate(Payload* pl) {
 		Payload* ret = make();	
 		ret.base = pl.base;
-		ret.length = pl.length;
-		allocate(ret, pl.length);
-		size_t len = (*pl).length;
+		ret.length = pl.capacity;
+		allocate(ret, pl.capacity);
+		size_t len = (*pl).capacity;
 		ret.store[0 .. len] = pl.store[0 .. len];
-		//for(size_t i = 0; i < len; ++i) {
-		//	(ret.store)[i] = (pl.store)[i];
-		//}
 		return ret;
 	}
 }
@@ -181,18 +180,36 @@ struct Deque(T) {
 
 	Payload* payload;
 
-	private void buildPtr() {
-		if(this.payload !is null) {
-			if(this.payload.ptrCnt > 1) {
-
-			}
-		}
-	}
-
 	/** If `true` no destructor of any element stored in the Deque
 	  will be called.
 	*/
 	bool disableDtor;
+
+	enum TSize = SizeToAlloc!T;
+
+	template SizeToAlloc(S) {
+		static if(is(S == class)) {
+			enum SizeToAlloc = __traits(classInstanceSize, S);
+		} else {
+			enum SizeToAlloc = S.sizeof;
+		}
+	}
+
+	private void checkPayload() {
+		if(this.payload is null) {
+			this.payload = PayloadHandler.make();
+			PayloadHandler.allocate(this.payload, TSize * 16);
+		} else if(this.payload.refCnt > 1) {
+			this.payload = PayloadHandler.duplicate(this.payload);
+		}
+	}
+
+	private void buildCapacity() {
+		this.checkPayload();
+		if(this.payload.length + TSize >= this.payload.capacity) {
+			PayloadHandler.allocate(this.payload, this.payload.capacity * 2);
+		}
+	}
 
 	/+pragma(inline, true)
 	this(Args...)(Args args) {
@@ -224,12 +241,13 @@ struct Deque(T) {
 	pragma(inline, true)
 	void insertBack(S)(auto ref S t) @trusted if(is(Unqual!(S) == T)) {
 		import std.conv : emplace;
-		assert(this.length + 1 <= Size);
+		this.buildCapacity();
 
-		*(cast(T*)(&this.store[
-			cast(size_t)((this.base + this.length_) % ByteCap)
+		*(cast(T*)(&this.payload.store[
+			cast(size_t)((this.payload.base + this.payload.length) %
+				this.payload.capacity)
 		])) = t;
-		this.length_ += T.sizeof;
+		this.payload.length += TSize;
 	}
 
 	/+
@@ -582,11 +600,15 @@ struct Deque(T) {
 		assert(fsa[0] == 1337);
 		assert(fsa[1] == 1338);
 	}
+	+/
 
 	/// Gives the length of the array.
 	pragma(inline, true)
 	@property size_t length() const pure @nogc nothrow {
-		return cast(size_t)(this.length_ / T.sizeof);
+		if(this.payload is null) {
+			return cast(size_t)0;
+		}
+		return cast(size_t)(this.payload.length / SizeToAlloc!T);
 	}
 
 	/// Ditto
@@ -595,6 +617,7 @@ struct Deque(T) {
 		return this.length == 0;
 	}
 
+	/+
 	///
 	pure @safe nothrow unittest {
 		Deque!(int,32) fsa;
@@ -639,6 +662,14 @@ struct Deque(T) {
 	}
 	+/
 }
+
+unittest {
+	Deque!int d;
+	for(int i = 0; i < 20; ++i) {
+		d.insertBack(i);
+	}
+}
+
 /+
 unittest {
 	import exceptionhandling;
