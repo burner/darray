@@ -218,7 +218,7 @@ struct Deque(T) {
 		}
 	}
 
-	/+pragma(inline, true)
+	pragma(inline, true)
 	this(Args...)(Args args) {
 		foreach(it; args) {
 			static if(isAssignable!(T,typeof(it))) {
@@ -228,14 +228,18 @@ struct Deque(T) {
 	}
 
 	pragma(inline, true)
-	~this() {
-		static if(hasElaborateDestructor!T) {
-			if(!this.disableDtor) {
-				this.removeAll();
+	~this() @trusted {
+		if(this.payload !is null) { 
+			if(this.payload.refCnt == 1) {
+				static if(hasElaborateDestructor!T && !is(T == class)) {
+					if(!this.disableDtor) {
+						this.removeAll();
+					}
+				}
 			}
+			PayloadHandler.decrementRefCnt(this.payload);
 		}
 	}
-	+/
 
 	pragma(inline, true)
 	size_t capacity() const @nogc @safe pure nothrow {
@@ -330,9 +334,8 @@ struct Deque(T) {
 		this.payload.length += TSize;
 	}
 
-	/+
-	pure @safe unittest {
-		Deque!(int,32) fsa;
+	@safe unittest {
+		Deque!(int) fsa;
 		fsa.insertFront(1337);
 		assert(fsa.length == 1);
 		assert(fsa[0] == 1337);
@@ -350,8 +353,8 @@ struct Deque(T) {
 		assert(fsa.back == 1336);
 	}
 
-	pure @safe unittest {
-		Deque!(int,16) fsa;
+	@safe unittest {
+		Deque!(int) fsa;
 		for(int i = 0; i < 32; ++i) {
 			fsa.insertFront(i);
 			assert(fsa.length == 1);
@@ -364,8 +367,8 @@ struct Deque(T) {
 		}
 	}
 
-	pure @safe unittest {
-		Deque!(int,16) fsa;
+	@safe unittest {
+		Deque!(int) fsa;
 		for(int i = 0; i < 32; ++i) {
 			fsa.insertFront(i);
 			assert(fsa.length == 1);
@@ -378,8 +381,8 @@ struct Deque(T) {
 		}
 	}
 
-	pure @safe nothrow unittest {
-		Deque!(int,16) fsa;
+	@safe unittest {
+		Deque!(int) fsa;
 		for(int i = 0; i < 32; ++i) {
 			fsa.insertBack(i);
 			assert(fsa.length == 1);
@@ -390,22 +393,6 @@ struct Deque(T) {
 			assert(fsa.length == 0);
 			assert(fsa.empty);
 		}
-	}
-	+/
-
-	/** This function emplaces an `S` element at the back if there is space.
-	Otherwise the behaviour is undefined.
-	*/
-	pragma(inline, true)
-	void emplaceBack(Args...)(auto ref Args args) {
-		import std.conv : emplace;
-		this.buildCapacity();
-
-		emplace(cast(T*)(&this.payload.store[
-			cast(size_t)((this.payload.base + this.payload.length) %
-				this.payload.capacity)]
-		), args);
-		this.payload.length += TSize;
 	}
 
 	/** This function removes an element form the back of the array.
@@ -488,7 +475,6 @@ struct Deque(T) {
 		assert(fsa.empty);
 	}
 
-	/+
 	pragma(inline, true)
 	void remove(ulong idx) {
 		import std.stdio;
@@ -505,7 +491,7 @@ struct Deque(T) {
 	}
 
 	unittest {
-		Deque!(int,16) fsa;
+		Deque!(int) fsa;
 		foreach(i; 0..10) {
 			fsa.insertBack(i);
 		}
@@ -538,7 +524,6 @@ struct Deque(T) {
 			assert(fsa[idx] == i);
 		}
 	}
-	+/
 
 	/** Access the last or the first element of the array.
 	*/
@@ -869,17 +854,17 @@ unittest {
 	}
 }
 
-/+
 unittest {
 	import exceptionhandling;
 
 	int cnt;
-	int cnt2;
 
 	struct Foo {
 		int* cnt;
 		this(int* cnt) { this.cnt = cnt; }
-		~this() { if(cnt) { ++(*cnt); } }
+		~this() { if(cnt) { 
+			++(*cnt); 
+		} }
 	}
 
 	int i = 0;
@@ -892,16 +877,7 @@ unittest {
 			fsa.insertBack(Foo(&cnt));
 		}
 
-		cast(void)assertEqual(cnt, 8 * i + 8);
-
-		{
-			Deque!(Foo) fsa;
-			fsa.emplaceBack(&cnt2);
-			fsa.emplaceBack(&cnt2);
-			fsa.emplaceBack(&cnt2);
-			fsa.emplaceBack(&cnt2);
-		}
-		cast(void)assertEqual(cnt2, 4 * i + 4);
+		assert(cnt > i * 4);
 	}
 }
 
@@ -909,7 +885,7 @@ unittest {
 unittest {
 	import exceptionhandling;
 
-	Deque!(int,2) fsa;
+	Deque!(int) fsa;
 	fsa.insertBack(0);
 	fsa.insertBack(1);
 
@@ -924,7 +900,7 @@ unittest {
 	import std.stdio;
 	string s = "Hellö Wärlß";
 	{
-		Deque!(char,32) fsa;
+		Deque!(char) fsa;
 		foreach(dchar c; s) {
 			fsa.insertBack(c);
 		}
@@ -934,7 +910,7 @@ unittest {
 	}
 	{
 		import std.format;
-		Deque!(char,32) fsa;
+		Deque!(char) fsa;
 		formattedWrite(fsa[], s);
 		for(int i = 0; i < s.length; ++i) {
 			assert(fsa[i] == s[i]);
@@ -946,8 +922,9 @@ unittest {
 	import std.stdio;
 	import core.memory;
 	enum size = 128;
-	auto arrays = new Deque!(int, size)[size];
-	GC.removeRoot(arrays.ptr);
+	//auto arrays = new Deque!(int)[size];
+	Deque!(int)[size] arrays;
+	//GC.removeRoot(arrays.ptr);
 	//Deque!(int, size)[size] arrays;
 	foreach (i; 0..size) {
 	    foreach (j; 0..size) {
@@ -974,12 +951,11 @@ unittest {
 	import std.stdio;
 	import core.memory;
 	enum size = 256;
-	auto arrays = new Deque!(Object,size)();
-	//Deque!(Object, size) arrays;
+	Deque!(Object) arrays;
 	foreach (i; 0..size) {
 		auto o = new Object();
 		assert(arrays.length == i);
-		foreach(it; (*arrays)[]) {
+		foreach(it; arrays[]) {
 			assert(it !is null);
 			assert(it.toHash());
 		}
@@ -991,14 +967,14 @@ unittest {
 
 	assert(arrays.length == size);
 	for(int i = 0; i < size; ++i) {
-		assert((*arrays)[i] !is null);
-		assert((*arrays)[i].toHash());
+		assert(arrays[i] !is null);
+		assert(arrays[i].toHash());
 	}
 	bool[Object] o;
 	foreach (i; 0..size) {
-		assert((*arrays)[i] !is null);
-		assert((*arrays)[i] !in o);
-	    o[(*arrays)[i]] = true;
+		assert(arrays[i] !is null);
+		assert(arrays[i] !in o);
+	    o[arrays[i]] = true;
 	    
 	}
 	assert(size == o.length);
@@ -1006,19 +982,20 @@ unittest {
 
 unittest {
 	import exceptionhandling;
-	Deque!(int,16) fsa;
+	Deque!(int) fsa;
 	fsa.insertFront(1337);
 	assert(!fsa.empty);
 	assertEqual(fsa.length, 1);
 	assertEqual(fsa.back, 1337);
 	assertEqual(fsa.front, 1337);
-	assertEqual(fsa.base, 15 * int.sizeof);
+	assertEqual(fsa.payload.base, 15 * int.sizeof);
 }
 
 // Test case Issue #2
 unittest {
 	enum size = 256;
-	auto arrays = new Deque!(Object, size * Object.sizeof)[size];
+	//auto arrays = new Deque!(Object)[size];
+	Deque!(Object)[size] arrays;
 	foreach (i; 0..size) {
 	    foreach (j; 0..size) {
 	        arrays[i].insertBack(new Object);
@@ -1050,29 +1027,29 @@ unittest {
 	{
 		int a = 0;
 		{
-			Deque!(Foo,16) fsa;
+			Deque!(Foo) fsa;
 			for(int i = 0; i < 10; ++i) {
-				fsa.emplaceBack(&a);
+				fsa.insertBack(Foo(&a));
 			}
 		}
-		assertEqual(a, 10);
+		assertEqual(a, 20);
 	}
 	{
 		int a = 0;
 		{
-			Deque!(Foo,16) fsa;
+			Deque!(Foo) fsa;
 			fsa.disableDtor = true;
 			for(int i = 0; i < 10; ++i) {
-				fsa.emplaceBack(&a);
+				fsa.insertBack(Foo(&a));
 			}
 		}
-		assertEqual(a, 0);
+		assertEqual(a, 10);
 	}
 }
 
 unittest {
 	import std.range.primitives : hasAssignableElements, hasSlicing, isRandomAccessRange;
-	Deque!(int,32) fsa;
+	Deque!(int) fsa;
 	auto s = fsa[];
 	static assert(hasSlicing!(typeof(s)));
 	static assert(isRandomAccessRange!(typeof(s)));
@@ -1082,7 +1059,7 @@ unittest {
 unittest {
 	import exceptionhandling;
 
-	Deque!(int,32) fsa;
+	Deque!(int) fsa;
 	for(int i = 0; i < 32; ++i) {
 		fsa.insertBack(i);	
 	}
@@ -1117,12 +1094,12 @@ unittest {
 }
 
 unittest {
-	Deque!(int,32) fsaM;
+	Deque!(int) fsaM;
 	for(int i = 0; i < 32; ++i) {
 		fsaM.insertBack(i);	
 	}
 
-	const(Deque!(int,32)) fsa = fsaM;
+	const(Deque!(int)) fsa = fsaM;
 
 	auto s = fsa[];
 	for(int i = 0; i < 32; ++i) {
@@ -1148,7 +1125,7 @@ unittest {
 	}
 
 	auto rnd = Random(1337);
-	Deque!(Data,128) a;
+	Deque!(Data) a;
 	for(size_t i = 0; i < 4096; ++i) {
 		Data d;
 		d.a = i;
@@ -1185,4 +1162,4 @@ unittest {
 			assert(it.a <= i);
 		}
 	}
-}+/
+}
