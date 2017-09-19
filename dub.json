@@ -6,7 +6,8 @@
 	"dependencies": {
 		"exceptionhandling": "~>0.1.0"
 	},
-	"dflags" : ["-dip1000", "-dip25"],
+	"dflags-dmd" : ["-dip1000"],
+	"dflags" : ["-dip25"],
 	"description": "A double ended growable array",
 	"copyright": "Copyright © 2017, burner",
 	"license": "LGPL3"

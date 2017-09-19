@@ -1,9 +1,8 @@
-module fixedsizearray;
+module darray;
 
 import std.array : back;
 
 import exceptionhandling;
-//import std.experimental.logger;
 
 struct Payload {
 	align(8) void* store;
@@ -81,7 +80,7 @@ unittest {
 	PayloadHandler.decrementRefCnt(pl2);
 }
 
-struct DequeSlice(FSA,T) {
+struct DArraySlice(FSA,T) {
 	FSA* fsa;
 	short low;
 	short high;
@@ -176,12 +175,12 @@ struct DequeSlice(FSA,T) {
 	}
 }
 
-struct Deque(T) {
+struct DArray(T) {
 	import std.traits;
 
 	Payload* payload;
 
-	/** If `true` no destructor of any element stored in the Deque
+	/** If `true` no destructor of any element stored in the DArray
 	  will be called.
 	*/
 	bool disableDtor;
@@ -306,7 +305,7 @@ struct Deque(T) {
 
 	///
 	@safe unittest {
-		Deque!(int) fsa;
+		DArray!(int) fsa;
 		fsa.insertBack(1337);
 		assert(fsa.length == 1);
 		assert(fsa[0] == 1337);
@@ -335,7 +334,7 @@ struct Deque(T) {
 	}
 
 	@safe unittest {
-		Deque!(int) fsa;
+		DArray!(int) fsa;
 		fsa.insertFront(1337);
 		assert(fsa.length == 1);
 		assert(fsa[0] == 1337);
@@ -354,7 +353,7 @@ struct Deque(T) {
 	}
 
 	@safe unittest {
-		Deque!(int) fsa;
+		DArray!(int) fsa;
 		for(int i = 0; i < 32; ++i) {
 			fsa.insertFront(i);
 			assert(fsa.length == 1);
@@ -368,7 +367,7 @@ struct Deque(T) {
 	}
 
 	@safe unittest {
-		Deque!(int) fsa;
+		DArray!(int) fsa;
 		for(int i = 0; i < 32; ++i) {
 			fsa.insertFront(i);
 			assert(fsa.length == 1);
@@ -382,7 +381,7 @@ struct Deque(T) {
 	}
 
 	@safe unittest {
-		Deque!(int) fsa;
+		DArray!(int) fsa;
 		for(int i = 0; i < 32; ++i) {
 			fsa.insertBack(i);
 			assert(fsa.length == 1);
@@ -443,7 +442,7 @@ struct Deque(T) {
 	}
 
 	@safe unittest {
-		Deque!(int) fsa;
+		DArray!(int) fsa;
 		fsa.insertBack(1337);
 		assert(fsa.length == 1);
 		assert(fsa[0] == 1337);
@@ -463,7 +462,7 @@ struct Deque(T) {
 	}
 
 	@safe unittest {
-		Deque!(int) fsa;
+		DArray!(int) fsa;
 		fsa.insertBack(1337);
 		fsa.insertBack(1338);
 		assert(fsa.length == 2);
@@ -491,7 +490,7 @@ struct Deque(T) {
 	}
 
 	unittest {
-		Deque!(int) fsa;
+		DArray!(int) fsa;
 		foreach(i; 0..10) {
 			fsa.insertBack(i);
 		}
@@ -560,7 +559,7 @@ struct Deque(T) {
 
 	///
 	@safe unittest {
-		Deque!(int) fsa;
+		DArray!(int) fsa;
 		assertEqual(fsa.capacity, 0);
 		fsa.insertBack(1337);
 		fsa.insertBack(1338);
@@ -570,7 +569,7 @@ struct Deque(T) {
 		assert(fsa.front == 1337);
 		assert(fsa.back == 1338);
 
-		void f(ref const(Deque!int) d) {
+		void f(ref const(DArray!int) d) {
 			assert(d.front == 1337);
 			assert(d.back == 1338);
 		}
@@ -601,7 +600,7 @@ struct Deque(T) {
 
 	///
 	@safe unittest {
-		Deque!(int) fsa;
+		DArray!(int) fsa;
 		fsa.insertBack(1337);
 		fsa.insertBack(1338);
 		assert(fsa.length == 2);
@@ -609,7 +608,7 @@ struct Deque(T) {
 		assert(fsa[0] == 1337);
 		assert(fsa[1] == 1338);
 
-		void f(ref const(Deque!int) d) {
+		void f(ref const(DArray!int) d) {
 			assert(d[0] == 1337);
 			assert(d[1] == 1338);
 		}
@@ -634,7 +633,7 @@ struct Deque(T) {
 
 	///
 	@safe unittest {
-		Deque!(int) fsa;
+		DArray!(int) fsa;
 		assert(fsa.empty);
 		assert(fsa.length == 0);
 
@@ -646,38 +645,38 @@ struct Deque(T) {
 	}
 
 	pragma(inline, true)
-	DequeSlice!(typeof(this),T) opSlice() pure @nogc @safe nothrow {
-		return DequeSlice!(typeof(this),T)(&this, cast(short)0, 
+	DArraySlice!(typeof(this),T) opSlice() pure @nogc @safe nothrow {
+		return DArraySlice!(typeof(this),T)(&this, cast(short)0, 
 				cast(short)this.length
 		);
 	}
 	
 	pragma(inline, true)
-	DequeSlice!(typeof(this),T) opSlice(const size_t low, 
+	DArraySlice!(typeof(this),T) opSlice(const size_t low, 
 			const size_t high) 
 			pure @nogc @safe nothrow 
 	{
-		return DequeSlice!(typeof(this),T)(&this, cast(short)low, 
+		return DArraySlice!(typeof(this),T)(&this, cast(short)low, 
 				cast(short)high
 		);
 	}
 
 	pragma(inline, true)
 	auto opSlice() pure @nogc @safe nothrow const {
-		return DequeSlice!(typeof(this),const(T))
+		return DArraySlice!(typeof(this),const(T))
 			(&this, cast(short)0, cast(short)this.length);
 	}
 	
 	pragma(inline, true)
 	auto opSlice(const size_t low, const size_t high) pure @nogc @safe nothrow const 
 	{
-		return DequeSlice!(typeof(this),const(T))
+		return DArraySlice!(typeof(this),const(T))
 			(&this, cast(short)low, cast(short)high);
 	}
 }
 
 unittest {
-	Deque!int d;
+	DArray!int d;
 	assertEqual(d.length, 0);
 	assert(d.empty);
 
@@ -687,7 +686,7 @@ unittest {
 	}
 	assertEqual(d.length, 20);
 
-	Deque!int d2 = d;
+	DArray!int d2 = d;
 	assertEqual(d.length, 20);
 	assertEqual(d2.length, 20);
 
@@ -700,7 +699,7 @@ unittest {
 	import exceptionhandling;
 	import std.stdio;
 
-	Deque!(int) fsa;
+	DArray!(int) fsa;
 	assert(fsa.empty);
 	cast(void)assertEqual(fsa.length, 0);
 
@@ -731,7 +730,7 @@ unittest {
 unittest {
 	import std.format;
 
-	Deque!(char) fsa;
+	DArray!(char) fsa;
 	formattedWrite(fsa[], "%s %s %s", "Hello", "World", 42);
 	//assert(cast(string)fsa == "Hello World 42", cast(string)fsa);
 }
@@ -739,7 +738,7 @@ unittest {
 unittest {
 	import exceptionhandling;
 
-	Deque!(int) fsa;
+	DArray!(int) fsa;
 	auto a = [0,1,2,4,32,64,1024,2048,65000];
 	foreach(idx, it; a) {
 		fsa.insertBack(it);
@@ -758,12 +757,12 @@ unittest {
 	import std.range;
 	import std.stdio;
 	foreach(Type; AliasSeq!(byte,int,long)) {
-		Deque!(Type) fsa2;
+		DArray!(Type) fsa2;
 		static assert(isInputRange!(typeof(fsa2[])));
 		static assert(isForwardRange!(typeof(fsa2[])));
 		static assert(isBidirectionalRange!(typeof(fsa2[])));
 		foreach(idx, it; [[0], [0,1,2,3,4], [2,3,6,5,6,21,9,36,61,62]]) {
-			Deque!(Type) fsa;
+			DArray!(Type) fsa;
 			foreach(jdx, jt; it) {
 				fsa.insertBack(jt);
 				//writefln("%s idx %d jdx %d length %d", Type.stringof, idx, jdx, fsa.length);
@@ -811,7 +810,7 @@ unittest {
 				}
 
 				{
-					const(Deque!(Type))* constFsa;
+					const(DArray!(Type))* constFsa;
 					constFsa = &fsa;
 					auto forward = (*constFsa)[];
 					auto forward2 = forward.save;
@@ -870,7 +869,7 @@ unittest {
 	int i = 0;
 	for(; i < 1000; ++i) {
 		{
-			Deque!(Foo) fsa;
+			DArray!(Foo) fsa;
 			fsa.insertBack(Foo(&cnt));
 			fsa.insertBack(Foo(&cnt));
 			fsa.insertBack(Foo(&cnt));
@@ -885,7 +884,7 @@ unittest {
 unittest {
 	import exceptionhandling;
 
-	Deque!(int) fsa;
+	DArray!(int) fsa;
 	fsa.insertBack(0);
 	fsa.insertBack(1);
 
@@ -900,7 +899,7 @@ unittest {
 	import std.stdio;
 	string s = "Hellö Wärlß";
 	{
-		Deque!(char) fsa;
+		DArray!(char) fsa;
 		foreach(dchar c; s) {
 			fsa.insertBack(c);
 		}
@@ -910,7 +909,7 @@ unittest {
 	}
 	{
 		import std.format;
-		Deque!(char) fsa;
+		DArray!(char) fsa;
 		formattedWrite(fsa[], s);
 		for(int i = 0; i < s.length; ++i) {
 			assert(fsa[i] == s[i]);
@@ -922,10 +921,10 @@ unittest {
 	import std.stdio;
 	import core.memory;
 	enum size = 128;
-	//auto arrays = new Deque!(int)[size];
-	Deque!(int)[size] arrays;
+	//auto arrays = new DArray!(int)[size];
+	DArray!(int)[size] arrays;
 	//GC.removeRoot(arrays.ptr);
-	//Deque!(int, size)[size] arrays;
+	//DArray!(int, size)[size] arrays;
 	foreach (i; 0..size) {
 	    foreach (j; 0..size) {
 			assert(arrays[i].length == j);
@@ -951,7 +950,7 @@ unittest {
 	import std.stdio;
 	import core.memory;
 	enum size = 256;
-	Deque!(Object) arrays;
+	DArray!(Object) arrays;
 	foreach (i; 0..size) {
 		auto o = new Object();
 		assert(arrays.length == i);
@@ -982,7 +981,7 @@ unittest {
 
 unittest {
 	import exceptionhandling;
-	Deque!(int) fsa;
+	DArray!(int) fsa;
 	fsa.insertFront(1337);
 	assert(!fsa.empty);
 	assertEqual(fsa.length, 1);
@@ -994,8 +993,8 @@ unittest {
 // Test case Issue #2
 unittest {
 	enum size = 256;
-	//auto arrays = new Deque!(Object)[size];
-	Deque!(Object)[size] arrays;
+	//auto arrays = new DArray!(Object)[size];
+	DArray!(Object)[size] arrays;
 	foreach (i; 0..size) {
 	    foreach (j; 0..size) {
 	        arrays[i].insertBack(new Object);
@@ -1027,7 +1026,7 @@ unittest {
 	{
 		int a = 0;
 		{
-			Deque!(Foo) fsa;
+			DArray!(Foo) fsa;
 			for(int i = 0; i < 10; ++i) {
 				fsa.insertBack(Foo(&a));
 			}
@@ -1037,7 +1036,7 @@ unittest {
 	{
 		int a = 0;
 		{
-			Deque!(Foo) fsa;
+			DArray!(Foo) fsa;
 			fsa.disableDtor = true;
 			for(int i = 0; i < 10; ++i) {
 				fsa.insertBack(Foo(&a));
@@ -1049,7 +1048,7 @@ unittest {
 
 unittest {
 	import std.range.primitives : hasAssignableElements, hasSlicing, isRandomAccessRange;
-	Deque!(int) fsa;
+	DArray!(int) fsa;
 	auto s = fsa[];
 	static assert(hasSlicing!(typeof(s)));
 	static assert(isRandomAccessRange!(typeof(s)));
@@ -1059,7 +1058,7 @@ unittest {
 unittest {
 	import exceptionhandling;
 
-	Deque!(int) fsa;
+	DArray!(int) fsa;
 	for(int i = 0; i < 32; ++i) {
 		fsa.insertBack(i);	
 	}
@@ -1094,12 +1093,12 @@ unittest {
 }
 
 unittest {
-	Deque!(int) fsaM;
+	DArray!(int) fsaM;
 	for(int i = 0; i < 32; ++i) {
 		fsaM.insertBack(i);	
 	}
 
-	const(Deque!(int)) fsa = fsaM;
+	const(DArray!(int)) fsa = fsaM;
 
 	auto s = fsa[];
 	for(int i = 0; i < 32; ++i) {
@@ -1125,7 +1124,7 @@ unittest {
 	}
 
 	auto rnd = Random(1337);
-	Deque!(Data) a;
+	DArray!(Data) a;
 	for(size_t i = 0; i < 4096; ++i) {
 		Data d;
 		d.a = i;
