@@ -4,82 +4,6 @@ import std.array : back;
 
 import exceptionhandling;
 
-struct Payload {
-	align(8) void* store;
-	size_t capacity;
-	long base;
-	long length;
-	long refCnt;
-}
-
-struct PayloadHandler {
-	import core.memory : GC;
-	static Payload* make() @trusted {
-		Payload* pl;
-		pl = cast(Payload*)GC.realloc(pl, typeof(*pl).sizeof);
-		pl.store = null;
-		pl.base = 0;
-		pl.length = 0;
-		pl.capacity = 0;
-		pl.refCnt = 1;
-
-		return pl;
-	}
-
-	static void allocate(Payload* pl, in size_t s) @trusted {
-		assert(s != 0);
-		if(s >= pl.length) {
-			pl.store = GC.realloc(pl.store, s);
-			pl.capacity = s;
-		}
-	}
-
-	static void deallocate(Payload* pl) @trusted {
-		GC.realloc(pl.store, 0);
-		pl.capacity = 0;
-		GC.realloc(pl, 0);
-	}
-
-	static void incrementRefCnt(Payload* pl) {
-		if(pl !is null) {
-			++(pl.refCnt);
-		}
-	}
-
-	static void decrementRefCnt(Payload* pl) {
-		if(pl !is null) {
-			--(pl.refCnt);
-			if(pl.refCnt == 0) {
-				deallocate(pl);
-			}
-		}
-	}
-
-	static Payload* duplicate(Payload* pl) {
-		Payload* ret = make();	
-		ret.base = pl.base;
-		ret.length = pl.length;
-		allocate(ret, pl.capacity);
-		size_t len = (*pl).capacity;
-		ret.store[0 .. len] = pl.store[0 .. len];
-		decrementRefCnt(pl);
-		return ret;
-	}
-}
-
-unittest {
-	auto pl = PayloadHandler.make();
-	PayloadHandler.allocate(pl, int.sizeof);
-	*(cast(int*)(pl.store)) = 1337;
-	assertEqual(*(cast(int*)(pl.store)), 1337);
-	PayloadHandler.incrementRefCnt(pl);
-	auto pl2 = PayloadHandler.duplicate(pl);
-	assertEqual(*(cast(int*)(pl2.store)), 1337);
-	PayloadHandler.decrementRefCnt(pl);
-	PayloadHandler.decrementRefCnt(pl);
-	PayloadHandler.decrementRefCnt(pl2);
-}
-
 struct DArraySlice(FSA,T) {
 	FSA* fsa;
 	short low;
@@ -178,42 +102,13 @@ struct DArraySlice(FSA,T) {
 struct DArray(T) {
 	import std.traits;
 
-	Payload* payload;
-
-	/** If `true` no destructor of any element stored in the DArray
-	  will be called.
-	*/
-	bool disableDtor;
-
-	enum TSize = SizeToAlloc!T;
-
-	this(this) {
-		if(this.payload !is null) {
-			PayloadHandler.incrementRefCnt(this.payload);
-		}
-	}
-
-	template SizeToAlloc(S) {
-		static if(is(S == class)) {
-			enum SizeToAlloc = __traits(classInstanceSize, S);
-		} else {
-			enum SizeToAlloc = S.sizeof;
-		}
-	}
-
-	private void checkPayload() {
-		if(this.payload is null) {
-			this.payload = PayloadHandler.make();
-			PayloadHandler.allocate(this.payload, TSize * 16);
-		} else if(this.payload.refCnt > 1) {
-			this.payload = PayloadHandler.duplicate(this.payload);
-		}
-	}
+	T[] data;
+	long base;
+	long len;
 
 	private void buildCapacity() {
-		this.checkPayload();
-		if(this.payload.length + TSize >= this.payload.capacity) {
-			PayloadHandler.allocate(this.payload, this.payload.capacity * 2);
+		if(this.len + 1 >= this.data.length) {
+			this.data.length = (this.data.length + 10) * 2;
 		}
 	}
 
@@ -227,25 +122,8 @@ struct DArray(T) {
 	}
 
 	pragma(inline, true)
-	~this() @trusted {
-		if(this.payload !is null) { 
-			if(this.payload.refCnt == 1) {
-				static if(hasElaborateDestructor!T && !is(T == class)) {
-					if(!this.disableDtor) {
-						this.removeAll();
-					}
-				}
-			}
-			PayloadHandler.decrementRefCnt(this.payload);
-		}
-	}
-
-	pragma(inline, true)
 	size_t capacity() const @nogc @safe pure nothrow {
-		if(this.payload is null) {
-			return cast(size_t)0;
-		}
-		return this.payload.capacity;
+		return this.data.length;
 	}
 
 	/** This function inserts an `S` element at the back if there is space.
@@ -255,44 +133,21 @@ struct DArray(T) {
 	void insertBack(S)(auto ref S t) @trusted if(is(Unqual!(S) == T)) {
 		this.buildCapacity();
 
-		*(cast(T*)(&this.payload.store[
-			cast(size_t)((this.payload.base + this.payload.length) %
-				this.payload.capacity)
-		])) = t;
-		this.payload.length += TSize;
+		this.data[
+			cast(size_t)((this.base + this.len) %
+				this.data.length)
+		] = t;
+		++this.len;
 	}
 
 	/// Ditto
 	pragma(inline, true)
 	void insertBack(S)(auto ref S s) @trusted if(!is(Unqual!(S) == T)) {
-		import std.traits;
-		import std.conv;
-
-		static if((isIntegral!T || isFloatingPoint!T) 
-				|| (isSomeChar!T && isSomeChar!S && T.sizeof >= S.sizeof)) 
-		{
-			this.insertBack!T(cast(T)(s));
-		} else static if (isSomeChar!T && isSomeChar!S && T.sizeof < S.sizeof) {
-            /* may throwable operation:
-             * - std.utf.encode
-             */
-            // must do some transcoding around here
-            import std.utf : encode;
-            Unqual!T[T.sizeof == 1 ? 4 : 2] encoded;
-            auto len = encode(encoded, s);
-			foreach(T it; encoded[0 .. len]) {
-				 this.insertBack!T(it);
-			}
-        } else static if(isAssignable!(T,S)) {
-			this.buildCapacity();
-			*(cast(T*)(&this.payload.store[
-				cast(size_t)((this.payload.base + this.payload.length) %
-					this.payload.capacity)
-			])) = s;
-			this.payload.length += TSize;
-		} else {
-			static assert(false);
-		}
+		this.buildCapacity();
+		this.data[
+			cast(size_t)((this.base + this.len) %
+				this.len)
+		] = s;
 	}
 
 	/// Ditto
@@ -302,96 +157,20 @@ struct DArray(T) {
 			this.insertBack(defaultValue);
 		}
 	}
-
-	///
-	@safe unittest {
-		DArray!(int) fsa;
-		fsa.insertBack(1337);
-		assert(fsa.length == 1);
-		assert(fsa[0] == 1337);
-
-		fsa.insertBack(99, 5);
-
-		foreach(it; fsa[1 .. fsa.length]) {
-			assert(it == 99);
-		}
-	}
-
 	/** This function inserts an `S` element at the front if there is space.
 	Otherwise the behaviour is undefined.
 	*/
 	pragma(inline, true)
 	void insertFront(S)(auto ref S t) @trusted if(is(Unqual!(S) == T)) {
 		this.buildCapacity();
-		this.payload.base -= TSize;
-		if(this.payload.base < 0) {
-			this.payload.base =
-				cast(typeof(this.payload.base))((this.payload.capacity) - TSize);
+		--this.base;
+		if(this.base < 0) {
+			this.base =
+				cast(typeof(this.base))(this.data.length - 1);
 		}
 
-		*(cast(T*)(&this.payload.store[cast(size_t)this.payload.base])) = t;
-		this.payload.length += TSize;
-	}
-
-	@safe unittest {
-		DArray!(int) fsa;
-		fsa.insertFront(1337);
-		assert(fsa.length == 1);
-		assert(fsa[0] == 1337);
-		assert(fsa.front == 1337);
-		assert(fsa.back == 1337);
-
-		fsa.removeBack();
-		assert(fsa.length == 0);
-		assert(fsa.empty);
-		fsa.insertFront(1336);
-
-		assert(fsa.length == 1);
-		assert(fsa[0] == 1336);
-		assert(fsa.front == 1336);
-		assert(fsa.back == 1336);
-	}
-
-	@safe unittest {
-		DArray!(int) fsa;
-		for(int i = 0; i < 32; ++i) {
-			fsa.insertFront(i);
-			assert(fsa.length == 1);
-			assert(!fsa.empty);
-			assert(fsa.front == i);
-			assert(fsa.back == i);
-			fsa.removeFront();
-			assert(fsa.length == 0);
-			assert(fsa.empty);
-		}
-	}
-
-	@safe unittest {
-		DArray!(int) fsa;
-		for(int i = 0; i < 32; ++i) {
-			fsa.insertFront(i);
-			assert(fsa.length == 1);
-			assert(!fsa.empty);
-			assert(fsa.front == i);
-			assert(fsa.back == i);
-			fsa.removeBack();
-			assert(fsa.length == 0);
-			assert(fsa.empty);
-		}
-	}
-
-	@safe unittest {
-		DArray!(int) fsa;
-		for(int i = 0; i < 32; ++i) {
-			fsa.insertBack(i);
-			assert(fsa.length == 1);
-			assert(!fsa.empty);
-			assert(fsa.front == i);
-			assert(fsa.back == i);
-			fsa.removeFront();
-			assert(fsa.length == 0);
-			assert(fsa.empty);
-		}
+		this.data[cast(size_t)this.base] = t;
+		++this.len;
 	}
 
 	/** This function removes an element form the back of the array.
@@ -400,19 +179,7 @@ struct DArray(T) {
 	void removeBack() {
 		assert(!this.empty);
 
-		static if(hasElaborateDestructor!T) {
-			if(!this.disableDtor) {
-				static if(hasMember!(T, "__dtor")) {
-					this.back().__dtor();
-				} else static if(hasMember!(T, "__xdtor")) {
-					this.back().__xdtor();
-				} else {
-					static assert(false);
-				}
-			}
-		}
-
-		this.payload.length -= TSize;
+		--this.len;
 	}
 
 	/** This function removes an element form the front of the array.
@@ -421,35 +188,12 @@ struct DArray(T) {
 	void removeFront() {
 		assert(!this.empty);
 
-		static if(hasElaborateDestructor!T) {
-			if(!this.disableDtor) {
-				static if(hasMember!(T, "__dtor")) {
-					this.back().__dtor();
-				} else static if(hasMember!(T, "__xdtor")) {
-					this.back().__xdtor();
-				} else {
-					static assert(false);
-				}
-			}
-		}
-
 		//this.begin = (this.begin + T.sizeof) % (Size * T.sizeof);
-		this.payload.base += TSize;
-		if(this.payload.base >= this.payload.capacity) {
-			this.payload.base = 0;
+		++this.base;
+		if(this.base >= this.data.length) {
+			this.base = 0;
 		}
-		this.payload.length -= TSize;
-	}
-
-	@safe unittest {
-		DArray!(int) fsa;
-		fsa.insertBack(1337);
-		assert(fsa.length == 1);
-		assert(fsa[0] == 1337);
-		
-		fsa.removeBack();
-		assert(fsa.length == 0);
-		assert(fsa.empty);
+		--this.len;
 	}
 
 	/** This function removes all elements from the array.
@@ -459,19 +203,6 @@ struct DArray(T) {
 		while(!this.empty) {
 			this.removeBack();
 		}
-	}
-
-	@safe unittest {
-		DArray!(int) fsa;
-		fsa.insertBack(1337);
-		fsa.insertBack(1338);
-		assert(fsa.length == 2);
-		assert(fsa[0] == 1337);
-		assert(fsa[1] == 1338);
-		
-		fsa.removeAll();
-		assert(fsa.length == 0);
-		assert(fsa.empty);
 	}
 
 	pragma(inline, true)
@@ -489,92 +220,35 @@ struct DArray(T) {
 		}
 	}
 
-	unittest {
-		DArray!(int) fsa;
-		foreach(i; 0..10) {
-			fsa.insertBack(i);
-		}
-		fsa.remove(1);
-		foreach(idx, i; [0,2,3,4,5,6,7,8,9]) {
-			assert(fsa[idx] == i);
-		}
-		fsa.remove(0);
-		foreach(idx, i; [2,3,4,5,6,7,8,9]) {
-			assert(fsa[idx] == i);
-		}
-		fsa.remove(7);
-		foreach(idx, i; [2,3,4,5,6,7,8]) {
-			assert(fsa[idx] == i);
-		}
-		fsa.remove(5);
-		foreach(idx, i; [2,3,4,5,6,8]) {
-			assert(fsa[idx] == i);
-		}
-		fsa.remove(1);
-		foreach(idx, i; [2,4,5,6,8]) {
-			assert(fsa[idx] == i);
-		}
-		fsa.remove(0);
-		foreach(idx, i; [4,5,6,8]) {
-			assert(fsa[idx] == i);
-		}
-		fsa.remove(0);
-		foreach(idx, i; [5,6,8]) {
-			assert(fsa[idx] == i);
-		}
-	}
-
 	/** Access the last or the first element of the array.
 	*/
 	pragma(inline, true)
 	@property ref T back() @trusted @nogc {
-		debug ensure(this.payload !is null);
-		return *(cast(T*)(&this.payload.store[
-			cast(size_t)(this.payload.base + this.payload.length - TSize) 
-				% this.payload.capacity
-		]));
+		debug ensure(!this.empty);
+		return this.data[
+			cast(size_t)(this.base + this.len - 1) % this.data.length
+		];
 	}
 
 	pragma(inline, true)
 	@property ref const(T) back() const @trusted @nogc {
-		debug ensure(this.payload !is null);
-		return *(cast(T*)(&this.payload.store[
-			cast(size_t)(this.payload.base + this.payload.length - TSize) 
-				% this.payload.capacity
-		]));
+		debug ensure(!this.empty);
+		return this.data[
+			cast(size_t)(this.base + this.len - 1) % this.data.length
+		];
 	}
 
 	/// Ditto
 	pragma(inline, true)
 	@property ref T front() @trusted @nogc {
-		debug ensure(this.payload !is null);
-		return *(cast(T*)(&this.payload.store[cast(size_t)this.payload.base]));
+		debug ensure(!this.empty);
+		return this.data[cast(size_t)this.base];
 	}
 
 	pragma(inline, true)
 	@property ref const(T) front() const @trusted @nogc {
-		debug ensure(this.payload !is null);
-		return *(cast(T*)(&this.payload.store[cast(size_t)this.payload.base]));
-	}
-
-	///
-	@safe unittest {
-		DArray!(int) fsa;
-		assertEqual(fsa.capacity, 0);
-		fsa.insertBack(1337);
-		fsa.insertBack(1338);
-		assert(fsa.capacity > 0);
-		assert(fsa.length == 2);
-
-		assert(fsa.front == 1337);
-		assert(fsa.back == 1338);
-
-		void f(ref const(DArray!int) d) {
-			assert(d.front == 1337);
-			assert(d.back == 1338);
-		}
-
-		f(fsa);
+		debug ensure(!this.empty);
+		return this.data[cast(size_t)this.base];
 	}
 
 	/** Use an index to access the array.
@@ -582,67 +256,16 @@ struct DArray(T) {
 	pragma(inline, true)
 	ref T opIndex(const size_t idx) @trusted @nogc {
 		debug ensure(idx < this.length);
-		return *(cast(T*)(&this.payload.store[
-				cast(size_t)((this.payload.base + idx * TSize) %
-					this.payload.capacity)
-		]));
+		return this.data[cast(size_t)((this.base + idx) % this.data.length)];
 	}
 
 	/// Ditto
 	pragma(inline, true)
 	ref const(T) opIndex(const size_t idx) @trusted const @nogc {
 		debug ensure(idx < this.length);
-		return *(cast(T*)(&this.payload.store[
-				cast(size_t)((this.payload.base + idx * TSize) %
-					this.payload.capacity)
-		]));
+		return this.data[cast(size_t)((this.base + idx) % this.data.length)];
 	}
 
-	///
-	@safe unittest {
-		DArray!(int) fsa;
-		fsa.insertBack(1337);
-		fsa.insertBack(1338);
-		assert(fsa.length == 2);
-
-		assert(fsa[0] == 1337);
-		assert(fsa[1] == 1338);
-
-		void f(ref const(DArray!int) d) {
-			assert(d[0] == 1337);
-			assert(d[1] == 1338);
-		}
-
-		f(fsa);
-	}
-
-	/// Gives the length of the array.
-	pragma(inline, true)
-	@property size_t length() const pure @nogc nothrow {
-		if(this.payload is null) {
-			return cast(size_t)0;
-		}
-		return cast(size_t)(this.payload.length / SizeToAlloc!T);
-	}
-
-	/// Ditto
-	pragma(inline, true)
-	@property bool empty() const pure @nogc nothrow {
-		return this.length == 0;
-	}
-
-	///
-	@safe unittest {
-		DArray!(int) fsa;
-		assert(fsa.empty);
-		assert(fsa.length == 0);
-
-		fsa.insertBack(1337);
-		fsa.insertBack(1338);
-
-		assert(fsa.length == 2);
-		assert(!fsa.empty);
-	}
 
 	pragma(inline, true)
 	DArraySlice!(typeof(this),T) opSlice() pure @nogc @safe nothrow {
@@ -673,6 +296,209 @@ struct DArray(T) {
 		return DArraySlice!(typeof(this),const(T))
 			(&this, cast(short)low, cast(short)high);
 	}
+
+	/// Gives the length of the array.
+	pragma(inline, true)
+	@property size_t length() const pure @nogc nothrow {
+		return this.len;
+	}
+	
+	/// Ditto
+	pragma(inline, true)
+	@property bool empty() const pure @nogc nothrow {
+		return this.len == 0;
+	}
+
+}
+
+version(unittest) {
+	import std.stdio;
+}
+
+@safe unittest {
+	DArray!(int) fsa;
+	fsa.insertFront(1337);
+	assert(fsa.length == 1);
+	assert(fsa[0] == 1337);
+	assert(fsa.front == 1337);
+	assert(fsa.back == 1337);
+
+	fsa.removeBack();
+	assert(fsa.length == 0);
+	assert(fsa.empty);
+	fsa.insertFront(1336);
+
+	assert(fsa.length == 1);
+	assert(fsa[0] == 1336);
+	assert(fsa.front == 1336);
+	assert(fsa.back == 1336);
+}
+
+@safe unittest {
+	DArray!(int) fsa;
+	for(int i = 0; i < 32; ++i) {
+		fsa.insertFront(i);
+		assert(fsa.length == 1);
+		assert(!fsa.empty);
+		assert(fsa.front == i);
+		assert(fsa.back == i);
+		fsa.removeFront();
+		assert(fsa.length == 0);
+		assert(fsa.empty);
+	}
+}
+
+@safe unittest {
+	DArray!(int) fsa;
+	for(int i = 0; i < 32; ++i) {
+		fsa.insertFront(i);
+		assert(fsa.length == 1);
+		assert(!fsa.empty);
+		assert(fsa.front == i);
+		assert(fsa.back == i);
+		fsa.removeBack();
+		assert(fsa.length == 0);
+		assert(fsa.empty);
+	}
+}
+
+@safe unittest {
+	DArray!(int) fsa;
+	for(int i = 0; i < 32; ++i) {
+		fsa.insertBack(i);
+		assert(fsa.length == 1);
+		assert(!fsa.empty);
+		assert(fsa.front == i);
+		assert(fsa.back == i);
+		fsa.removeFront();
+		assert(fsa.length == 0);
+		assert(fsa.empty);
+	}
+}
+
+///
+@safe unittest {
+	DArray!(int) fsa;
+	fsa.insertBack(1337);
+	assert(fsa.length == 1);
+	assert(fsa[0] == 1337);
+
+	fsa.insertBack(99, 5);
+
+	foreach(it; fsa[1 .. fsa.length]) {
+		assert(it == 99);
+	}
+}
+
+@safe unittest {
+	DArray!(int) fsa;
+	fsa.insertBack(1337);
+	assert(fsa.length == 1);
+	assert(fsa[0] == 1337);
+	
+	fsa.removeBack();
+	assert(fsa.length == 0);
+	assert(fsa.empty);
+}
+
+@safe unittest {
+	DArray!(int) fsa;
+	fsa.insertBack(1337);
+	fsa.insertBack(1338);
+	assert(fsa.length == 2);
+	assert(fsa[0] == 1337);
+	assert(fsa[1] == 1338);
+	
+	fsa.removeAll();
+	assert(fsa.length == 0);
+	assert(fsa.empty);
+}
+
+unittest {
+	DArray!(int) fsa;
+	foreach(i; 0..10) {
+		fsa.insertBack(i);
+	}
+	fsa.remove(1);
+	foreach(idx, i; [0,2,3,4,5,6,7,8,9]) {
+		assert(fsa[idx] == i);
+	}
+	fsa.remove(0);
+	foreach(idx, i; [2,3,4,5,6,7,8,9]) {
+		assert(fsa[idx] == i);
+	}
+	fsa.remove(7);
+	foreach(idx, i; [2,3,4,5,6,7,8]) {
+		assert(fsa[idx] == i);
+	}
+	fsa.remove(5);
+	foreach(idx, i; [2,3,4,5,6,8]) {
+		assert(fsa[idx] == i);
+	}
+	fsa.remove(1);
+	foreach(idx, i; [2,4,5,6,8]) {
+		assert(fsa[idx] == i);
+	}
+	fsa.remove(0);
+	foreach(idx, i; [4,5,6,8]) {
+		assert(fsa[idx] == i);
+	}
+	fsa.remove(0);
+	foreach(idx, i; [5,6,8]) {
+		assert(fsa[idx] == i);
+	}
+}
+
+
+///
+@safe unittest {
+	DArray!(int) fsa;
+	assertEqual(fsa.capacity, 0);
+	fsa.insertBack(1337);
+	fsa.insertBack(1338);
+	assert(fsa.capacity > 0);
+	assert(fsa.length == 2);
+
+	assert(fsa.front == 1337);
+	assert(fsa.back == 1338);
+
+	void f(ref const(DArray!int) d) {
+		assert(d.front == 1337);
+		assert(d.back == 1338);
+	}
+
+	f(fsa);
+}
+
+
+///
+@safe unittest {
+	DArray!(int) fsa;
+	fsa.insertBack(1337);
+	fsa.insertBack(1338);
+	assert(fsa.length == 2);
+
+	assert(fsa[0] == 1337);
+	assert(fsa[1] == 1338);
+
+	void f(ref const(DArray!int) d) {
+		assert(d[0] == 1337);
+		assert(d[1] == 1338);
+	}
+
+	f(fsa);
+}
+///
+@safe unittest {
+	DArray!(int) fsa;
+	assert(fsa.empty);
+	assert(fsa.length == 0);
+
+	fsa.insertBack(1337);
+	fsa.insertBack(1338);
+
+	assert(fsa.length == 2);
+	assert(!fsa.empty);
 }
 
 unittest {
@@ -756,6 +582,7 @@ unittest {
 	import std.meta;
 	import std.range;
 	import std.stdio;
+	import std.conv : to;
 	foreach(Type; AliasSeq!(byte,int,long)) {
 		DArray!(Type) fsa2;
 		static assert(isInputRange!(typeof(fsa2[])));
@@ -764,7 +591,7 @@ unittest {
 		foreach(idx, it; [[0], [0,1,2,3,4], [2,3,6,5,6,21,9,36,61,62]]) {
 			DArray!(Type) fsa;
 			foreach(jdx, jt; it) {
-				fsa.insertBack(jt);
+				fsa.insertBack(to!Type(jt));
 				//writefln("%s idx %d jdx %d length %d", Type.stringof, idx, jdx, fsa.length);
 				cast(void)assertEqual(fsa.length, jdx + 1);
 				foreach(kdx, kt; it[0 .. jdx]) {
@@ -869,46 +696,16 @@ unittest {
 }
 
 unittest {
-	import exceptionhandling;
-	import std.stdio;
-	string s = "Hellö Wärlß";
-	{
-		DArray!(char) fsa;
-		foreach(dchar c; s) {
-			fsa.insertBack(c);
-		}
-		for(int i = 0; i < s.length; ++i) {
-			assert(fsa[i] == s[i]);
-		}
-	}
-	{
-		import std.format;
-		DArray!(char) fsa;
-		formattedWrite(fsa[], s);
-		for(int i = 0; i < s.length; ++i) {
-			assert(fsa[i] == s[i]);
-		}
-	}
-}
-
-unittest {
 	import std.stdio;
 	import core.memory;
 	enum size = 128;
-	//auto arrays = new DArray!(int)[size];
 	DArray!(int)[size] arrays;
-	//GC.removeRoot(arrays.ptr);
-	//DArray!(int, size)[size] arrays;
 	foreach (i; 0..size) {
 	    foreach (j; 0..size) {
 			assert(arrays[i].length == j);
 	        arrays[i].insertBack(i * 1000 + j);
 	    }
 	}
-	/*foreach(ref it; arrays) {
-		writef("%d ", it.length);
-	}
-	writeln();*/
 	bool[int] o;
 	foreach (i; 0..size) {
 	    foreach (j; 0..size) {
@@ -961,13 +758,11 @@ unittest {
 	assertEqual(fsa.length, 1);
 	assertEqual(fsa.back, 1337);
 	assertEqual(fsa.front, 1337);
-	assertEqual(fsa.payload.base, 15 * int.sizeof);
 }
 
 // Test case Issue #2
 unittest {
 	enum size = 256;
-	//auto arrays = new DArray!(Object)[size];
 	DArray!(Object)[size] arrays;
 	foreach (i; 0..size) {
 	    foreach (j; 0..size) {
@@ -982,45 +777,6 @@ unittest {
 	}
 	assert(o.length == size * size);
 }
-
-/*unittest {
-	import exceptionhandling;
-	struct Foo {
-		int* a;
-		this(int* a) {
-			ensure(a !is null);
-			this.a = a;
-		}
-		~this() {
-			if(this.a !is null) {
-				ensure(this.a !is null);
-				++(*a);
-			}
-		}
-	}
-
-	//{
-	//	int a = 0;
-	//	{
-	//		DArray!(Foo) fsa;
-	//		for(int i = 0; i < 10; ++i) {
-	//			fsa.insertBack(Foo(&a));
-	//		}
-	//	}
-	//	assertEqual(a, 20);
-	//}
-	{
-		int a = 0;
-		{
-			DArray!(Foo) fsa;
-			fsa.disableDtor = true;
-			for(int i = 0; i < 10; ++i) {
-				fsa.insertBack(Foo(&a));
-			}
-		}
-		assertEqual(a, 10);
-	}
-}*/
 
 unittest {
 	import std.range.primitives : hasAssignableElements, hasSlicing, isRandomAccessRange;
@@ -1138,30 +894,3 @@ unittest {
 		}
 	}
 }
-
-/*unittest {
-	import exceptionhandling;
-
-	int cnt;
-
-	struct Foo {
-		int* cnt;
-		this(int* cnt) { this.cnt = cnt; }
-		~this() { if(cnt) { 
-			++(*cnt); 
-		} }
-	}
-
-	int i = 0;
-	for(; i < 1000; ++i) {
-		{
-			DArray!(Foo) fsa;
-			fsa.insertBack(Foo(&cnt));
-			fsa.insertBack(Foo(&cnt));
-			fsa.insertBack(Foo(&cnt));
-			fsa.insertBack(Foo(&cnt));
-		}
-
-		assert(cnt > i * 4);
-	}
-}*/
